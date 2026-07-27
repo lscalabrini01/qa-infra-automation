@@ -10,3 +10,23 @@ output "kube_api_host" {
 output "fqdn" {
   value = var.create_loadbalancer ? "${module.harvester_loadbalancer.ip_address}.sslip.io" : "${harvester_virtualmachine.vm[local.node_names[local.first_etcd_index].name].network_interface[0].ip_address}.sslip.io"
 }
+
+output "cluster_nodes_json" {
+  description = "Complete node metadata for bridge script consumption (scripts/generate_inventory.py)"
+  value = jsonencode({
+    type = "cluster_nodes"
+    metadata = {
+      kube_api_host = harvester_virtualmachine.vm[local.node_names[local.first_etcd_index].name].network_interface[0].ip_address
+      fqdn          = var.create_loadbalancer ? "${module.harvester_loadbalancer.ip_address}.sslip.io" : "${harvester_virtualmachine.vm[local.node_names[local.first_etcd_index].name].network_interface[0].ip_address}.sslip.io"
+      ssh_user      = var.ssh_user
+    }
+    nodes = [
+      for node in local.node_names : {
+        name       = node.name
+        roles      = node.role
+        public_ip  = harvester_virtualmachine.vm[node.name].network_interface[0].ip_address
+        private_ip = harvester_virtualmachine.vm[node.name].network_interface[0].ip_address
+      }
+    ]
+  })
+}

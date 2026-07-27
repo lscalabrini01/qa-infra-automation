@@ -40,7 +40,12 @@ Refer to `variables.tf` for a list of configurable variables.
 
 ## Outputs
 
-Refer to `outputs.tf` for a list of exported values.
+Refer to `outputs.tf` for a list of exported values, including
+`cluster_nodes_json` — the standard Tofu→Ansible bridge contract (see
+[docs/adding-a-provider.md](../../../../docs/adding-a-provider.md)) consumed by
+`scripts/generate_inventory.py` to produce a static Ansible inventory. See
+[ansible/harvester/README.md](../../../../ansible/harvester/README.md) for the
+full VM provisioning → RKE2 → Rancher pipeline built on top of this module.
 
 ## Sample
 

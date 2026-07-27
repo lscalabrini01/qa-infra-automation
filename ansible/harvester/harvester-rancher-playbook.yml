@@ -1,0 +1,6 @@
+---
+- import_playbook: create-vms-playbook.yml
+
+- import_playbook: ../rke2/default/rke2-playbook.yml
+
+- import_playbook: ../rancher/default-ha/rancher-playbook.yml

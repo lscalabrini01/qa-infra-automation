@@ -1,0 +1,137 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  vars_files:
+    - vars.yaml
+  vars:
+    repo_root: "{{ playbook_dir | dirname | dirname }}"
+    kubeconfig_file: "{{ harvester_kubeconfig_file | default(repo_root + '/ansible/rke2/default/kubeconfig.yaml') }}"
+    admin_password: "{{ lookup('env', 'RANCHER_PASSWORD') | default(rancher_password, true) | default('admin', true) }}"
+    downstream_cluster_name_prefix_default: "{{ lookup('env', 'DOWNSTREAM_CLUSTER_NAME_PREFIX') | default('harvester-downstream', true) }}"
+    downstream_cluster_name_suffix_length_default: 8
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - rancher_hostname is defined
+          - rancher_hostname | length > 0
+        fail_msg: >
+          rancher_hostname (the fqdn of the Rancher instance to import into)
+          must be defined in vars.yaml or via --extra-vars.
+
+    - name: Check downstream cluster kubeconfig exists
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_file }}"
+      register: kubeconfig_stat
+
+    - name: Fail if kubeconfig is missing
+      ansible.builtin.fail:
+        msg: >
+          Kubeconfig not found at {{ kubeconfig_file }}. Provision the downstream
+          cluster first — run ansible/harvester/create-vms-playbook.yml then
+          ansible/rke2/default/rke2-playbook.yml (or
+          ansible/harvester/harvester-downstream-playbook.yml).
+      when: not kubeconfig_stat.stat.exists
+
+  tasks:
+    - name: Get Rancher UserID and Token
+      ansible.builtin.uri:
+        url: "https://{{ rancher_hostname }}/v3-public/localProviders/local?action=login"
+        body:
+          username: admin
+          password: "{{ admin_password }}"
+        method: POST
+        force_basic_auth: true
+        validate_certs: false
+        status_code: 201
+        body_format: json
+      register: token_response
+      retries: 5
+      delay: 10
+      until: token_response.status == 201
+
+    - name: Get cluster name from explicit variable or environment
+      ansible.builtin.set_fact:
+        cluster_name: "{{ cluster_name | default(lookup('env', 'DOWNSTREAM_CLUSTER_NAME'), true) }}"
+
+    - name: Generate cluster name as <prefix>-<random suffix> when not explicitly set
+      ansible.builtin.set_fact:
+        cluster_name: "{{ downstream_cluster_name_prefix | default(downstream_cluster_name_prefix_default) }}-{{ lookup('password', '/dev/null length=' ~ (downstream_cluster_name_suffix_length | default(downstream_cluster_name_suffix_length_default)) ~ ' chars=ascii_lowercase,digits') }}"
+      when: cluster_name | default('', true) | length == 0
+
+    - name: Display generated cluster name
+      ansible.builtin.debug:
+        msg: "Downstream cluster name: {{ cluster_name }}"
+
+    - name: Create generic imported cluster with OpenTofu
+      ansible.builtin.shell: |
+        tofu init
+        tofu apply -auto-approve -var 'fqdn=https://{{ rancher_hostname }}' -var 'api_key={{ token_response.json.token }}' -var 'cluster_name={{ cluster_name }}'
+      args:
+        chdir: "{{ repo_root }}/tofu/rancher/import"
+      register: import_command
+
+    - name: Get OpenTofu outputs as JSON
+      ansible.builtin.command:
+        cmd: tofu output -json
+        chdir: "{{ repo_root }}/tofu/rancher/import"
+      register: tofu_outputs_json
+
+    - name: Set useful facts
+      ansible.builtin.set_fact:
+        api_key: "{{ token_response.json.token }}"
+        cluster_id: "{{ (tofu_outputs_json.stdout | from_json).cluster_id.value }}"
+        cluster_registration_token: "{{ (tofu_outputs_json.stdout | from_json).cluster_registration_token.value }}"
+
+    - name: Download manifest to register into Rancher
+      ansible.builtin.get_url:
+        url: "https://{{ rancher_hostname }}/v3/import/{{ cluster_registration_token }}_{{ cluster_id }}.yaml"
+        dest: "/tmp/cluster_registration_manifest_{{ ansible_facts.date_time.iso8601 }}.yaml"
+        mode: "0755"
+        timeout: 60
+        force: true
+        validate_certs: false
+      register: import_manifest
+
+    - name: Apply manifest to add cluster to Rancher
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ import_manifest.dest }}"
+        kubeconfig: "{{ kubeconfig_file }}"
+        verify_ssl: false
+      environment:
+        RANCHER_INSECURE: true
+
+    - name: Wait for agent deployment to be ready
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Deployment
+        name: cattle-cluster-agent
+        namespace: cattle-system
+        wait: true
+        wait_timeout: 300
+        kubeconfig: "{{ kubeconfig_file }}"
+        wait_condition:
+          type: Available
+          status: "True"
+
+    - name: Check if imported cluster is ready
+      ansible.builtin.uri:
+        url: "https://{{ rancher_hostname }}/v3/clusters/{{ cluster_id }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ api_key }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: 200
+        body_format: json
+      register: cluster_check
+      retries: 5
+      delay: 30
+      until: cluster_check.status == 200 and cluster_check.json.state == "active"
+
+    - name: Report imported cluster
+      ansible.builtin.debug:
+        msg: "Cluster '{{ cluster_name }}' (id={{ cluster_id }}) imported and active in Rancher at https://{{ rancher_hostname }}"

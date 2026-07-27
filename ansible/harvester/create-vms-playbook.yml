@@ -1,0 +1,74 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - vars.yaml
+  vars:
+    qa_infra_dir: "{{ playbook_dir | dirname | dirname }}"
+    tofu_module_path: "{{ harvester_tofu_module | default(qa_infra_dir + '/tofu/harvester/modules/vm') }}"
+    tofu_tfvars_file: "{{ harvester_tfvars_file | default(tofu_module_path + '/terraform.tfvars') }}"
+    work_dir: "{{ output_dir | default('/tmp/harvester-vms') }}"
+    cluster_nodes_json_file: "{{ work_dir }}/harvester-nodes.json"
+    ansible_inventory_dir: "{{ harvester_inventory_dir | default(qa_infra_dir + '/ansible/' + distro + '/default/inventory') }}"
+
+  tasks:
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - distro is defined
+          - distro in ['rke2', 'k3s']
+        fail_msg: "distro (rke2|k3s) must be defined in vars.yaml or --extra-vars"
+
+    - name: Ensure working directory exists
+      ansible.builtin.file:
+        path: "{{ work_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Check tfvars file exists
+      ansible.builtin.stat:
+        path: "{{ tofu_tfvars_file }}"
+      register: tfvars_stat
+
+    - name: Fail if tfvars file is missing
+      ansible.builtin.fail:
+        msg: >
+          terraform.tfvars not found at {{ tofu_tfvars_file }}. Create it first —
+          see tofu/harvester/modules/vm/README.md for the required variables
+          (nodes, ssh_key, ...).
+      when: not tfvars_stat.stat.exists
+
+    - name: Tofu init
+      ansible.builtin.command:
+        cmd: tofu init -input=false -no-color
+        chdir: "{{ tofu_module_path }}"
+      changed_when: false
+
+    - name: Tofu apply (create Harvester VMs)
+      ansible.builtin.command:
+        cmd: >-
+          tofu apply -var-file="{{ tofu_tfvars_file }}" -auto-approve -no-color -input=false
+        chdir: "{{ tofu_module_path }}"
+      changed_when: true
+
+    - name: Dump cluster_nodes_json output
+      ansible.builtin.shell: >-
+        tofu output -raw -no-color cluster_nodes_json > "{{ cluster_nodes_json_file }}"
+      args:
+        chdir: "{{ tofu_module_path }}"
+      changed_when: true
+
+    - name: Generate Ansible inventory from cluster_nodes_json
+      ansible.builtin.command:
+        cmd: >-
+          python3 {{ qa_infra_dir }}/scripts/generate_inventory.py
+          --input {{ cluster_nodes_json_file }}
+          --distro {{ distro }} --env default
+          --schema {{ qa_infra_dir }}/ansible/_inventory-schema.yaml
+          --output-dir {{ ansible_inventory_dir }}
+      changed_when: true
+
+    - name: Report generated inventory location
+      ansible.builtin.debug:
+        msg: "Harvester VMs created. Inventory written to {{ ansible_inventory_dir }}/inventory.yml"
