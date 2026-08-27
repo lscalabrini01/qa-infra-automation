@@ -84,8 +84,10 @@ the rest of this module's resources.
 
 Bring-your-own VPC/subnet/SG (the previous, still-supported behavior) remains
 available — just set `node_config.aws_vpc`/`aws_subnet`/`aws_security_group`
-as before. The IDs actually used are exported via this module's `vpc_id`,
-`subnet_id`, and `security_group_ids` outputs.
+as before. The VPC/subnet IDs and security group name actually used are
+exported via this module's `vpc_id`, `subnet_id`, and `security_group_names`
+outputs. The ephemeral security group is always passed downstream by name
+(not id), matching amazonec2_config's expected `security_group` format.
 
 ## Sample `vars.tfvars`
 this will highly depend on the selected provider. This example includes options for aws. Sensitive info is omitted.

@@ -14,8 +14,8 @@ output "subnet_id" {
   sensitive   = true
 }
 
-output "security_group_ids" {
-  description = "The security group IDs used for the AWS node pool — either node_config.aws_security_group if supplied, or the ephemerally created security group. Null for non-aws cloud_provider."
-  value       = var.cloud_provider == "aws" ? local.security_group_ids : null
+output "security_group_names" {
+  description = "The security group names used for the AWS node pool — either node_config.aws_security_group if supplied, or the ephemerally created security group's name. Null for non-aws cloud_provider."
+  value       = var.cloud_provider == "aws" ? local.security_group_names : null
   sensitive   = true
 }

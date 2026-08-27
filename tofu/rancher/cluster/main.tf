@@ -17,9 +17,12 @@ locals {
   create_subnet          = var.cloud_provider == "aws" && try(var.node_config.aws_subnet, null) == null
   create_security_group  = var.cloud_provider == "aws" && length(try(var.node_config.aws_security_group, [])) == 0
 
-  vpc_id             = local.create_vpc ? aws_vpc.ephemeral[0].id : try(var.node_config.aws_vpc, null)
-  subnet_id          = local.create_subnet ? aws_subnet.ephemeral[0].id : try(var.node_config.aws_subnet, null)
-  security_group_ids = local.create_security_group ? [aws_security_group.ephemeral[0].id] : try(var.node_config.aws_security_group, [])
+  vpc_id               = local.create_vpc ? aws_vpc.ephemeral[0].id : try(var.node_config.aws_vpc, null)
+  subnet_id            = local.create_subnet ? aws_subnet.ephemeral[0].id : try(var.node_config.aws_subnet, null)
+  # amazonec2_config.security_group expects group *names* (docker-machine looks
+  # up/creates by name); an sg-* id here would force security_group_readonly
+  # auto-detection in the machineconfig module into "existing id" mode.
+  security_group_names = local.create_security_group ? [aws_security_group.ephemeral[0].name] : try(var.node_config.aws_security_group, [])
 
   # Overlay resolved vpc/subnet/sg back into node_config. Always merge (rather
   # than branching between merge(...) and var.node_config) to avoid
@@ -29,7 +32,7 @@ locals {
   effective_node_config = merge(var.node_config, {
     aws_vpc            = var.cloud_provider == "aws" ? local.vpc_id : try(var.node_config.aws_vpc, null)
     aws_subnet         = var.cloud_provider == "aws" ? local.subnet_id : try(var.node_config.aws_subnet, null)
-    aws_security_group = var.cloud_provider == "aws" ? local.security_group_ids : try(var.node_config.aws_security_group, [])
+    aws_security_group = var.cloud_provider == "aws" ? local.security_group_names : try(var.node_config.aws_security_group, [])
   })
 }
 
