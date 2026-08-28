@@ -17,8 +17,27 @@ locals {
   create_subnet          = var.cloud_provider == "aws" && try(var.node_config.aws_subnet, null) == null
   create_security_group  = var.cloud_provider == "aws" && length(try(var.node_config.aws_security_group, [])) == 0
 
-  vpc_id               = local.create_vpc ? aws_vpc.ephemeral[0].id : try(var.node_config.aws_vpc, null)
-  subnet_id            = local.create_subnet ? aws_subnet.ephemeral[0].id : try(var.node_config.aws_subnet, null)
+  vpc_id         = local.create_vpc ? aws_vpc.ephemeral[0].id : try(var.node_config.aws_vpc, null)
+  subnet_id      = local.create_subnet ? aws_subnet.ephemeral[0].id : try(var.node_config.aws_subnet, null)
+  vpc_cidr_block = local.create_vpc ? aws_vpc.ephemeral[0].cidr_block : try(data.aws_vpc.selected[0].cidr_block, null)
+
+  # When self-provisioning only the subnet into a caller-supplied (BYO) VPC,
+  # var.ephemeral_subnet_cidr can't be used as-is — it's unrelated to that
+  # VPC's actual CIDR and AWS rejects it with InvalidSubnet.Range unless it
+  # happens to fall inside the real VPC range. Instead, carve a subnet of the
+  # same size (prefix length) as var.ephemeral_subnet_cidr out of the real VPC
+  # CIDR. When we own the VPC too, var.ephemeral_subnet_cidr is used directly
+  # since it's already guaranteed to fit inside var.ephemeral_vpc_cidr.
+  ephemeral_subnet_requested_prefix_len = tonumber(split("/", var.ephemeral_subnet_cidr)[1])
+  vpc_cidr_prefix_len                   = local.create_subnet ? tonumber(split("/", local.vpc_cidr_block)[1]) : null
+  ephemeral_subnet_cidr = local.create_vpc ? var.ephemeral_subnet_cidr : (
+    local.create_subnet ? cidrsubnet(
+      local.vpc_cidr_block,
+      max(local.ephemeral_subnet_requested_prefix_len - local.vpc_cidr_prefix_len, 0),
+      0
+    ) : null
+  )
+
   # amazonec2_config.security_group expects group *names* (docker-machine looks
   # up/creates by name); an sg-* id here would force security_group_readonly
   # auto-detection in the machineconfig module into "existing id" mode.
@@ -34,6 +53,14 @@ locals {
     aws_subnet         = var.cloud_provider == "aws" ? local.subnet_id : try(var.node_config.aws_subnet, null)
     aws_security_group = var.cloud_provider == "aws" ? local.security_group_names : try(var.node_config.aws_security_group, [])
   })
+}
+
+# Used to auto-detect the real CIDR of a caller-supplied (BYO) VPC so the
+# ephemeral subnet (when self-provisioned into it) can be carved from a valid
+# range instead of using the unrelated ephemeral_subnet_cidr default verbatim.
+data "aws_vpc" "selected" {
+  count = var.cloud_provider == "aws" && !local.create_vpc ? 1 : 0
+  id    = try(var.node_config.aws_vpc, null)
 }
 
 # Ephemeral network (aws only, created when vpc/subnet omitted).
@@ -57,12 +84,19 @@ data "aws_availability_zones" "available" {
 resource "aws_subnet" "ephemeral" {
   count                   = local.create_subnet ? 1 : 0
   vpc_id                  = local.vpc_id
-  cidr_block              = var.ephemeral_subnet_cidr
+  cidr_block              = local.ephemeral_subnet_cidr
   availability_zone       = data.aws_availability_zones.available[0].names[0]
   map_public_ip_on_launch = true
 
   tags = {
     Name = "${var.generate_name}-ephemeral-subnet"
+  }
+
+  lifecycle {
+    precondition {
+      condition     = local.vpc_cidr_prefix_len <= local.ephemeral_subnet_requested_prefix_len
+      error_message = "Cannot carve a /${local.ephemeral_subnet_requested_prefix_len} ephemeral subnet (ephemeral_subnet_cidr) out of VPC ${local.vpc_id} whose CIDR ${local.vpc_cidr_block} is a /${local.vpc_cidr_prefix_len} (smaller prefix lengths are larger ranges). Supply a larger ephemeral_subnet_cidr prefix or pass node_config.aws_subnet explicitly."
+    }
   }
 }
 

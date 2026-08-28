@@ -72,7 +72,10 @@ provisions its own equivalent instead:
 
 * A VPC (`ephemeral_vpc_cidr`, default `10.101.0.0/16`)
 * A public subnet (`ephemeral_subnet_cidr`, default `10.101.1.0/24`) with an
-  internet gateway + route table
+  internet gateway + route table. If `node_config.aws_vpc` is supplied (BYO
+  VPC) but `node_config.aws_subnet` is omitted, only `ephemeral_subnet_cidr`'s
+  prefix length is used — the actual subnet range is carved out of the
+  supplied VPC's real CIDR block instead, so it's always valid for that VPC.
 * A security group opening SSH (22), full intra-group traffic, and the
   RKE2/Rancher NLB listener ports (80, 443, 6443, 9345)
 

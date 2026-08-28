@@ -66,7 +66,7 @@ variable "ephemeral_vpc_cidr" {
 variable "ephemeral_subnet_cidr" {
   type        = string
   default     = "10.101.1.0/24"
-  description = "CIDR block for the ephemeral subnet created when cloud_provider=\"aws\" and node_config.aws_vpc/aws_subnet are omitted."
+  description = "CIDR block for the ephemeral subnet created when cloud_provider=\"aws\" and node_config.aws_vpc/aws_subnet are omitted. Used verbatim only when node_config.aws_vpc is also omitted (guaranteed to fit inside ephemeral_vpc_cidr). When node_config.aws_vpc is a pre-existing (BYO) VPC, only this value's prefix length is used — the actual subnet range is carved out of that VPC's real CIDR block instead, so it always fits."
 }
 
 variable "node_taints" {

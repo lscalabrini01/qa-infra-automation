@@ -82,7 +82,7 @@ variable "ephemeral_vpc_cidr" {
 }
 
 variable "ephemeral_subnet_cidr" {
-  description = "CIDR block for the self-provisioned ephemeral subnet, used only when var.aws_subnet is null."
+  description = "CIDR block for the self-provisioned ephemeral subnet, used only when var.aws_subnet is null. When var.aws_vpc is also null, used verbatim (guaranteed to fit inside ephemeral_vpc_cidr). When var.aws_vpc is a pre-existing (BYO) VPC, only this value's prefix length is used — the actual subnet range is carved out of that VPC's real CIDR block instead, so it always fits."
   type        = string
   default     = "10.100.1.0/24"
 }

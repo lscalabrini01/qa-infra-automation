@@ -84,7 +84,10 @@ defaults to `[]`), the module provisions its own equivalent instead:
 * A VPC (`ephemeral_vpc_cidr`, default `10.100.0.0/16`)
 * A public subnet (`ephemeral_subnet_cidr`, default `10.100.1.0/24`) with an
   internet gateway + route table, so instances keep getting public IPs exactly
-  as before (unless `airgap_setup`/`proxy_setup` is set)
+  as before (unless `airgap_setup`/`proxy_setup` is set). If `aws_vpc` is
+  supplied (BYO VPC) but `aws_subnet` is omitted, only `ephemeral_subnet_cidr`'s
+  prefix length is used — the actual subnet range is carved out of the
+  supplied VPC's real CIDR block instead, so it's always valid for that VPC.
 * A security group opening SSH (22), full intra-group traffic, and the
   RKE2/Rancher NLB listener ports (80, 443, 6443, 9345) — the same port matrix
   a manually-supplied `aws_security_group` is expected to already allow

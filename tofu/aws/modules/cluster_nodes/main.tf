@@ -36,6 +36,21 @@ locals {
   subnet_id = local.create_subnet ? aws_subnet.ephemeral[0].id : var.aws_subnet
   vpc_cidr_block = local.create_vpc ? aws_vpc.ephemeral[0].cidr_block : data.aws_vpc.selected[0].cidr_block
 
+  # When self-provisioning only the subnet into a caller-supplied (BYO) VPC,
+  # var.ephemeral_subnet_cidr can't be used as-is — it's unrelated to that
+  # VPC's actual CIDR and AWS rejects it with InvalidSubnet.Range unless it
+  # happens to fall inside the real VPC range. Instead, carve a subnet of the
+  # same size (prefix length) as var.ephemeral_subnet_cidr out of the real VPC
+  # CIDR. When we own the VPC too, var.ephemeral_subnet_cidr is used directly
+  # since it's already guaranteed to fit inside var.ephemeral_vpc_cidr.
+  ephemeral_subnet_requested_prefix_len = tonumber(split("/", var.ephemeral_subnet_cidr)[1])
+  vpc_cidr_prefix_len                   = tonumber(split("/", local.vpc_cidr_block)[1])
+  ephemeral_subnet_cidr = local.create_vpc ? var.ephemeral_subnet_cidr : cidrsubnet(
+    local.vpc_cidr_block,
+    max(local.ephemeral_subnet_requested_prefix_len - local.vpc_cidr_prefix_len, 0),
+    0
+  )
+
   # Self-provision the main security group the same way when none is supplied.
   create_security_group = length(var.aws_security_group) == 0
   security_group_ids    = local.create_security_group ? [aws_security_group.ephemeral[0].id] : var.aws_security_group
@@ -82,12 +97,19 @@ data "aws_availability_zones" "available" {
 resource "aws_subnet" "ephemeral" {
   count                   = local.create_subnet ? 1 : 0
   vpc_id                  = local.vpc_id
-  cidr_block              = var.ephemeral_subnet_cidr
+  cidr_block              = local.ephemeral_subnet_cidr
   availability_zone       = data.aws_availability_zones.available[0].names[0]
   map_public_ip_on_launch = var.airgap_setup ? false : true
 
   tags = {
     Name = "tf-${var.aws_hostname_prefix}-subnet"
+  }
+
+  lifecycle {
+    precondition {
+      condition     = local.vpc_cidr_prefix_len <= local.ephemeral_subnet_requested_prefix_len
+      error_message = "Cannot carve a /${local.ephemeral_subnet_requested_prefix_len} ephemeral subnet (ephemeral_subnet_cidr) out of VPC ${local.vpc_id} whose CIDR ${local.vpc_cidr_block} is a /${local.vpc_cidr_prefix_len} (smaller prefix lengths are larger ranges). Supply a larger ephemeral_subnet_cidr prefix or pass var.aws_subnet explicitly."
+    }
   }
 }
 
